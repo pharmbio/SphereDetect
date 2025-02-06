@@ -1,27 +1,86 @@
 import matplotlib.pyplot as plt
-
 import pandas as pd
 import numpy as np
 import os
-
 import tifffile as tiff
+
+
 
 class SphereDetect:
     """
-    A module for detecting spheres in 2D/3D data.
+    A module for detecting spheroids in confocal Z-stack image data.
     """
     
-    def __init__(self, data):
-        """
-        Initialize the SphereDetect module with data.
+    # @David, help: what is the data here exactly? 
+    def __init__(self): 
+        # The data should be a list of references to images?
+        # We need some way of knowing which       
+        self.data = None
+
+    # TODO: not sure if all these parameters should be with this function. They should be somewhere though. 
+    def load_data(
+            self: object, # Should be an object
+            regex: str,
+            favorite_channel: str,
+            cellprofiler_output: str,
+            image_path: str, 
+            flag: str = 'cellprofiler', 
+            offset: int = -2,
+            fmin: float = 250,
+            ): 
+        """ Load relevant images for spheroid detection
         
-        :param data: Input data (e.g., point cloud, image, etc.)
+
+        Parameters
+        ----------
+        flag : str, default 'cellprofiler'
+            is it a folder you are providing or a cellprofiler output?  
+            currently supports one of ['raw_images', 'cellprofiler']
+        path_to_images: string? 
+            a path to the folder with images #TODO: make it recursive, make it system invariant. 
+        regex : 
+            pattern that can collect metadata from the images. Only is CellProfiler data is not provided.
+        favorite_channel : str, default 'SYTO'
+            channel to perform detection on.
+        cellprofiler_output : 
+            path to cellprofiler output, should take both csv and parquet
+        image_path : 
+            directory of all your raw images. 
+        offset : int, default -2
+            value to offset the starting plane. Subtracting 2 works well in our case.
+        fmin : float, default 250
+            minimum value for the focus score at the maximum change. In practice this will help weed out some non-spheroid images, or poor qualiy spheroids. 
+            likely needs to be calibrated for each setup, and assay. 
         """
-        self.data = data
-    
-    def preprocess(self, df, channel):
+
+        # Check what input was given. 
+        if flag == 'raw_images': 
+            # Data is a filepath
+            self.data = self.load_from_images(cellprofiler_output)
+            # Do xyz
+        elif flag == 'cellprofiler':
+            self.data = self.load_from_cp_output(cellprofiler_output)
+        else: 
+            # There might be a problem 
+            print('Error, no correct flag was given')
+
+    #TODO: this is not correct yet. 
+    def load_from_images(image_path): 
+            # find a list of images recursively from image_path
+            image_list = os.listdir(image_path)
+            # What should it return here? 
+
+    #TODO: this is not correct yet. 
+    def load_from_cp_output(cellprofiler_output):
+            df = pd.read_parquet(cellprofiler_output)
+            # What should it return here? 
+
+    def preprocess_cellprofiler(self, df, channel):
         """
         Perform any necessary preprocessing on the input data.
+        #TODO: make this work on self-data
+    
+        Requires a Filename_XXX feature as well as a reference to the exact Z-plane
         """
         df['URL_SphereDetect'] = df[channel].str.split(':').apply(lambda parts: ':'.join(parts[1:]))
         df['Metadata_Z'] = df['FileName_SYTO'].str.extract(r'Z(\d+)C').astype(int) # Extract the Z slice number from the filename, there might be a better way to do this in the CellProfiler pipeline
@@ -50,11 +109,12 @@ class SphereDetect:
     def calculate_normalized_variance(self, data):
         return np.var(data) / np.mean(data)
     
-    def assign_plane(self, group):
+    #TODO: add the cutoffs here: fmin and offset?. Figure out some better names. 
+    def assign_plane(self, group, offset):
         idxmax = group['d_normalized_variance'].idxmax()
-        offset = group.index.get_loc(idxmax)
+        offset_x = group.index.get_loc(idxmax) + offset
         
-        planes = (np.arange(len(group)) - offset)
+        planes = (np.arange(len(group)) - offset_x)
         planes = np.where(planes < 0, pd.NA, planes)# Replace negative plane values (i.e. rows before max) with NaN
         
         group['Metadata_Plane'] = pd.Series(planes, index=group.index, dtype='Int64')
@@ -126,7 +186,7 @@ class SphereDetect:
         self.visualize()
         return results
 
-# Example usage
+# Example usage: @David, I do not understand the main part. 
 if __name__ == "__main__":
     sample_data = None  # Replace with actual data
     detector = SphereDetect(sample_data)
