@@ -4,71 +4,70 @@ import numpy as np
 import os
 import tifffile as tiff
 
+# --------------------------------------------------------------------------------------------------------------------
+# Need to figure out these things: 
+# --------------------------------------------------------------------------------------------------------------------
 
+#TODO: Make this work for both types of input. 
+# Cellprofiler output
+image_path = '/share/data/cellprofiler/automation/results/AssayPlate_Corning_3830/5514/8903/featICF_Image.parquet',
+# Folder raw images #TODO: find the folder path to raw images that I can access. 
+image_path = '/mnt/external-images-pvc/spher-colo52-az/CellPainting_20241220clearedspheroidsBOMI_20241220_151510/AssayPlate_Corning_3830/'
+
+#TODO: Take the following row out of the code. 
+df = pd.read_parquet(image_path)
+df['URL_SphereDetect'] = df['URL_SphereDetect'].str.replace(
+    '/share/data/external-datasets/', 
+    '/mnt/external-images-pvc/') # This is specific to the way the data is stored in our database
+
+# --------------------------------------------------------------------------------------------------------------------
 
 class SphereDetect:
     """
     A module for detecting spheroids in confocal Z-stack image data.
     """
     
-    # @David, help: what is the data here exactly? 
     def __init__(self): 
-        # The data should be a list of references to images?
-        # We need some way of knowing which       
+        # TODO: What is data exactly? A list of references to images?    
         self.data = None
 
-    # TODO: not sure if all these parameters should be with this function. They should be somewhere though. 
+    # TODO: What is the data here exactly? I have two types of input, and they should converge to one type of output, 
+    #preferably something that can be read by 
     def load_data(
             self: object, # Should be an object
-            regex: str,
-            favorite_channel: str,
-            cellprofiler_output: str,
             image_path: str, 
-            flag: str = 'cellprofiler', 
-            offset: int = -2,
-            fmin: float = 250,
+            channel: str, 
+            flag: str = 'cellprofiler',
             ): 
         """ Load relevant images for spheroid detection
-        
-
-        Parameters
-        ----------
-        flag : str, default 'cellprofiler'
-            is it a folder you are providing or a cellprofiler output?  
-            currently supports one of ['raw_images', 'cellprofiler']
-        path_to_images: string? 
-            a path to the folder with images #TODO: make it recursive, make it system invariant. 
-        regex : 
-            pattern that can collect metadata from the images. Only is CellProfiler data is not provided.
-        favorite_channel : str, default 'SYTO'
-            channel to perform detection on.
-        cellprofiler_output : 
-            path to cellprofiler output, should take both csv and parquet
-        image_path : 
-            directory of all your raw images. 
-        offset : int, default -2
-            value to offset the starting plane. Subtracting 2 works well in our case.
-        fmin : float, default 250
-            minimum value for the focus score at the maximum change. In practice this will help weed out some non-spheroid images, or poor qualiy spheroids. 
-            likely needs to be calibrated for each setup, and assay. 
         """
 
         # Check what input was given. 
         if flag == 'raw_images': 
+            # TODO: Check that instance is a folder with images
             # Data is a filepath
-            self.data = self.load_from_images(cellprofiler_output)
-            # Do xyz
+            self.data = self.load_from_images(image_path)
+            # TODO: Do xyz
         elif flag == 'cellprofiler':
-            self.data = self.load_from_cp_output(cellprofiler_output)
+            #TODO: Check that instance is a parquet or csv file, and that it has a feature called 
+            self.data = self.load_from_cp_output(image_path)
         else: 
             # There might be a problem 
             print('Error, no correct flag was given')
 
-    #TODO: this is not correct yet. 
+
     def load_from_images(image_path): 
-            # find a list of images recursively from image_path
-            image_list = os.listdir(image_path)
-            # What should it return here? 
+            """
+            contructs a list of images from the folder containing raw images 
+            image_path: str, 
+                folder path to the raw images
+            """
+            image_list = []
+            for root, dirs, files in os.walk(image_path):
+                for x in files:
+                     if x.endswith(".tif", ".tiff"): # assuming we have tif files 
+                        image_list.append(os.path.join(root, x))
+            return image_list
 
     #TODO: this is not correct yet. 
     def load_from_cp_output(cellprofiler_output):
@@ -84,7 +83,7 @@ class SphereDetect:
         """
         df['URL_SphereDetect'] = df[channel].str.split(':').apply(lambda parts: ':'.join(parts[1:]))
         df['Metadata_Z'] = df['FileName_SYTO'].str.extract(r'Z(\d+)C').astype(int) # Extract the Z slice number from the filename, there might be a better way to do this in the CellProfiler pipeline
-        df['URL_SphereDetect'] = df['URL_SphereDetect'].str.replace('/share/data/external-datasets/', '/mnt/external-images-pvc/') # This is specific to the way the data is stored in our database
+       
         df['normalized_variance'] = df['URL_SphereDetect'].apply(lambda image: self.calculate_normalized_variance(self.read_image(image)))
 
 
@@ -103,15 +102,17 @@ class SphereDetect:
         
         return df
     
+    # TODO: what is image here ? 
     def read_image(self, image):
         return tiff.TiffFile(image).asarray()
 
+    # TODO: what is data here? 
     def calculate_normalized_variance(self, data):
         return np.var(data) / np.mean(data)
     
     #TODO: add the cutoffs here: fmin and offset?. Figure out some better names. 
     def assign_plane(self, group, offset):
-        idxmax = group['d_normalized_variance'].idxmax()
+        idxmax = group['d_normalized_variance'].idxmax() # TODO: make this name better
         offset_x = group.index.get_loc(idxmax) + offset
         
         planes = (np.arange(len(group)) - offset_x)
@@ -148,14 +149,46 @@ class SphereDetect:
             ax.plot(group['Metadata_Z'], group['d_normalized_variance'], label=name)
         pass
     
-    def run(self):
+    def run(
+            self: object, # Should be an object
+            regex: str,
+            channel: str = 'URL_SYTO',
+            image_path: str = '/share/data/cellprofiler/automation/results/AssayPlate_Corning_3830/5514/8903/featICF_Image.parquet', 
+            flag: str = 'cellprofiler', 
+            offset: int = -2,
+            fmin: float = 250,
+            visualize : bool = False,
+            ):
         """
         Run the full sphere detection pipeline.
-        """
-        cellprofiler_output = '/share/data/cellprofiler/automation/results/AssayPlate_Corning_3830/5514/8903/featICF_Image.parquet' # Load the image URLS from here
-        channel = 'URL_SYTO'
 
-        df = pd.read_parquet(cellprofiler_output)
+        Parameters
+        ----------
+        flag : str, default 'cellprofiler'
+            is it a folder you are providing or a cellprofiler output?  
+            currently supports one of ['raw_images', 'cellprofiler']
+        path_to_images: string? 
+            a path to the folder with images #TODO: make it recursive, make it system invariant. 
+        regex : 
+            pattern that can collect metadata from the images. Only is CellProfiler data is not provided.
+        favorite_channel : str, default 'SYTO'
+            channel to perform detection on.
+        cellprofiler_output : 
+            path to cellprofiler output, should take both csv and parquet
+        image_path : 
+            directory of all your raw images. 
+        offset : int, default -2
+            value to offset the starting plane. Subtracting 2 works well in our case.
+        fmin : float, default 250
+            minimum value for the focus score at the maximum change. In practice this will help weed out some non-spheroid images, or poor qualiy spheroids. 
+            likely needs to be calibrated for each setup, and assay. 
+        visualize : Boolean, default False
+            True or False
+        """
+
+        self.load_data(flag, image_path)
+
+        # df = pd.read_parquet(cellprofiler_output)
         # self.preprocess()
         df = self.preprocess(df, channel)
         # df['URL_SphereDetect'] = df[channel].str.split(':').apply(lambda parts: ':'.join(parts[1:]))
@@ -190,6 +223,6 @@ class SphereDetect:
 if __name__ == "__main__":
     sample_data = None  # Replace with actual data
     detector = SphereDetect(sample_data)
-    detected_spheres = detector.run()
+    detected_spheres = detector.run(self)
     print(detected_spheres)
 
