@@ -20,6 +20,8 @@ df['URL_SphereDetect'] = df['URL_SphereDetect'].str.replace(
     '/share/data/external-datasets/', 
     '/mnt/external-images-pvc/') # This is specific to the way the data is stored in our database
 
+# TODO: Note somewhere that it would be best to have a metadata indicating slice or section or plane in the cellprofiler output. Fix it beforehand for the example.
+
 # --------------------------------------------------------------------------------------------------------------------
 
 class SphereDetect:
