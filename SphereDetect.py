@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import os
 import tifffile as tiff
+import re
 
 # --------------------------------------------------------------------------------------------------------------------
 # Need to figure out these things: 
@@ -21,6 +22,9 @@ df['URL_SphereDetect'] = df['URL_SphereDetect'].str.replace(
     '/mnt/external-images-pvc/') # This is specific to the way the data is stored in our database
 
 # TODO: Note somewhere that it would be best to have a metadata indicating slice or section or plane in the cellprofiler output. Fix it beforehand for the example.
+#  df['Metadata_Z'] = df['FileName_SYTO'].str.extract(r'Z(\d+)C').astype(int) # Extract the Z slice number from the filename, there might be a better way to do this in the CellProfiler pipeline
+
+#TODO: Make a normal setlist with Cellprofiler and see how it looks? 
 
 # --------------------------------------------------------------------------------------------------------------------
 
@@ -30,35 +34,51 @@ class SphereDetect:
     """
     
     def __init__(self): 
-        # TODO: What is data exactly? A list of references to images?    
         self.data = None
+        self.results = None
 
-    # TODO: What is the data here exactly? I have two types of input, and they should converge to one type of output, 
-    #preferably something that can be read by 
     def load_data(
-            self: object, # Should be an object
-            image_path: str, 
-            channel: str, 
+            self: object,
+            image_path: str,
+            regex: str = None, 
+            channel: str = None, 
             flag: str = 'cellprofiler',
             ): 
         """ Load relevant images for spheroid detection
         """
 
-        # Check what input was given. 
+        valid_flags = ['raw_images', 'cellprofiler']
+        if flag not in valid_flags:
+            raise ValueError(f"Expected one of {valid_flags}, got '{flag}'.")
+
+        # The path refers to a folder with raw images
         if flag == 'raw_images': 
-            # TODO: Check that instance is a folder with images
-            # Data is a filepath
-            self.data = self.load_from_images(image_path)
-            # TODO: Do xyz
+            if not os.path.isdir(image_path): 
+                raise ValueError(f"'{image_path}' is not a valid directory")
+            
+            if regex is None:
+                raise ValueError("For 'raw_images', you must specify a 'regex'.")
+            
+            self.data = self.load_from_images(image_path, regex)
+
+        # The path refers to a cellprofiler output
         elif flag == 'cellprofiler':
-            #TODO: Check that instance is a parquet or csv file, and that it has a feature called 
-            self.data = self.load_from_cp_output(image_path)
-        else: 
-            # There might be a problem 
-            print('Error, no correct flag was given')
+            if not os.path.isfile(image_path):
+                "The image_path is not a valid file"
+            
+            valid_extensions = {".csv", ".parquet"}
+            file_ext = os.path.splitext(image_path)[1].lower()
+            if file_ext not in valid_extensions:
+                raise ValueError(
+                    f"Expected a CSV or parquet file (.csv/.parquet), got '{file_ext}' for '{image_path}'."
+                    )
+            
+            if channel is None:
+                raise ValueError("For 'cellprofiler', you must specify a 'channel'.")
+            
+            self.data = self.load_from_cp_output(image_path, channel)
 
-
-    def load_from_images(image_path): 
+    def load_from_images(self, image_path, regex): 
             """
             contructs a list of images from the folder containing raw images 
             image_path: str, 
@@ -67,80 +87,104 @@ class SphereDetect:
             image_list = []
             for root, dirs, files in os.walk(image_path):
                 for x in files:
-                     if x.endswith(".tif", ".tiff"): # assuming we have tif files 
+                     if x.endswith(".tif", ".tiff") and re.search(regex, x) : # assuming we have tif files and we match the regex
                         image_list.append(os.path.join(root, x))
-            return image_list
 
-    #TODO: this is not correct yet. 
-    def load_from_cp_output(cellprofiler_output):
-            df = pd.read_parquet(cellprofiler_output)
-            # What should it return here? 
+            df = pd.DataFrame(image_list, columns=['image_path'])
+            df['Metadata_Well, Metadata_Z'] = df['image_path'].str.extract(regex).astype(int)
 
-    def preprocess_cellprofiler(self, df, channel):
+            return df
+
+    def load_from_cp_output(self, image_path, channel):
+
+        if cellprofiler_output.endswith(".csv"):
+            df = pd.read_csv(image_path)
+
+        elif cellprofiler_output.endswith(".parquet"):
+            df = pd.read_parquet(image_path)
+
+        if f'URL_{channel.upper()}' not in df.columns:
+            raise ValueError("The column f'URL_{channel.upper()}' is not present in the dataframe")
+
+
+        # Rename the URL column to match the channel
+        df = df.rename(columns={f'URL_{channel.upper()}': 'image_path'})
+
+        # Only keep the relevant columns
+        df = df[['Metadata_Well', 'Metadata_Z', 'image_path']]
+
+        return df
+
+    def detect_spheres(self, offset, fmin):
         """
-        Perform any necessary preprocessing on the input data.
-        #TODO: make this work on self-data
-    
-        Requires a Filename_XXX feature as well as a reference to the exact Z-plane
+        Detect spheroids in the image data, assign a plane number to each image, and filter out wells that do not meet the minimum focus score.
         """
-        df['URL_SphereDetect'] = df[channel].str.split(':').apply(lambda parts: ':'.join(parts[1:]))
-        df['Metadata_Z'] = df['FileName_SYTO'].str.extract(r'Z(\d+)C').astype(int) # Extract the Z slice number from the filename, there might be a better way to do this in the CellProfiler pipeline
-       
-        df['normalized_variance'] = df['URL_SphereDetect'].apply(lambda image: self.calculate_normalized_variance(self.read_image(image)))
+        # df['image_path'] = df[channel].str.split(':').apply(lambda parts: ':'.join(parts[1:])) #TODO: remove this from here? 
+              
+        # Calculate the normalized variance for each image
+        df['normalized_variance'] = df['image_path'].apply(lambda image: self.calculate_normalized_variance(self.read_image(image))) 
 
-
-        df['normalized_variance'] = df['URL_SphereDetect'].apply(lambda image: self.calculate_normalized_variance(self.read_image(image))) # Calculate the normalized variance for each image
-
+        # Caluclate the differential normalized variance
         df = (
             df.sort_values(['Metadata_Well', 'Metadata_Z'])
-                .assign(d_normalized_variance=lambda x: 
+                .assign(delta_normalized_variance=lambda x: 
                     x.groupby('Metadata_Well')['normalized_variance'].diff())
         )
+
+        # Assign the plane number to each image
         df = (
             df.sort_values(['Metadata_Well', 'Metadata_Z'])
                 .groupby('Metadata_Well', group_keys=False)
                 .apply(self.assign_plane)
         )
-        
-        return df
-    
-    # TODO: what is image here ? 
-    def read_image(self, image):
-        return tiff.TiffFile(image).asarray()
 
-    # TODO: what is data here? 
+        # Assign the plane number to each image
+        self.assign_plane(df, offset)
+
+        # Filter out wells that do not meet the minimum focus score
+        self.postprocess(df, fmin)
+
+        self.result = df
+    
+    def read_image(self, image):
+        with tiff.TiffFile(image) as tf:
+            data = tf.asarray()
+        return data
+
     def calculate_normalized_variance(self, data):
         return np.var(data) / np.mean(data)
     
-    #TODO: add the cutoffs here: fmin and offset?. Figure out some better names. 
+
     def assign_plane(self, group, offset):
-        idxmax = group['d_normalized_variance'].idxmax() # TODO: make this name better
+        idxmax = group['delta_normalized_variance'].idxmax() 
         offset_x = group.index.get_loc(idxmax) + offset
         
         planes = (np.arange(len(group)) - offset_x)
-        planes = np.where(planes < 0, pd.NA, planes)# Replace negative plane values (i.e. rows before max) with NaN
+        planes = np.where(planes < 0, pd.NA, planes) # Replace negative plane values (i.e. rows before max) with NaN; take a maximum plane limit?
         
         group['Metadata_Plane'] = pd.Series(planes, index=group.index, dtype='Int64')
-        return group
+        self.results = group
 
-    def detect_spheres(self):
+   
+    def postprocess(self, df, fmin):
         """
-        Detect spheres within the given data.
+        Discard any wells that do not meet the minimum focus score.
+        """
+       
+        #Identify the wells that meet the condition for plane 0
+        wells_of_interest = df.loc[
+            (df['Metadata_Plane'] == 0) & (df['normalized_variance'] > fmin),
+                'Metadata_Well'].unique()
+
+        filtered_df = df[df['Metadata_Well'].isin(wells_of_interest)]
         
-        :return: List of detected spheres (e.g., center coordinates and radius)
-        """
-        pass
+        self.results = filtered_df
     
-    def postprocess(self):
+    def visualize(self):
         """
-        Apply any post-processing steps to refine detection results.
+        Visualize detected spheres, works on the results of the detect_spheres method.
         """
-        pass
-    
-    def visualize(self, df):
-        """
-        Visualize detected spheres.
-        """
+        df = self.results
 
         df = df.sort_values(by='Metadata_Z')
         df_grouped = df.groupby('Metadata_Well')
@@ -149,12 +193,12 @@ class SphereDetect:
         fig, ax = plt.subplots()
         for name, group in df_grouped:
             ax.plot(group['Metadata_Z'], group['d_normalized_variance'], label=name)
-        pass
+
     
     def run(
-            self: object, # Should be an object
-            regex: str,
-            channel: str = 'URL_SYTO',
+            self: object, 
+            regex: str = r'([A-P]\d{1,2})Z(\d+)C03', #TODO: is this the best way to do this?
+            channel: str = 'SYTO',
             image_path: str = '/share/data/cellprofiler/automation/results/AssayPlate_Corning_3830/5514/8903/featICF_Image.parquet', 
             flag: str = 'cellprofiler', 
             offset: int = -2,
@@ -170,11 +214,11 @@ class SphereDetect:
             is it a folder you are providing or a cellprofiler output?  
             currently supports one of ['raw_images', 'cellprofiler']
         path_to_images: string? 
-            a path to the folder with images #TODO: make it recursive, make it system invariant. 
-        regex : 
+            a path to the folder with images or a path to the cellprofiler output
+        regex : str, default r'Z(\d+)C03'
             pattern that can collect metadata from the images. Only is CellProfiler data is not provided.
-        favorite_channel : str, default 'SYTO'
-            channel to perform detection on.
+        channel : str, default 'SYTO'
+            channel to perform detection on, needs to match the channelname in the cellprofiler output.
         cellprofiler_output : 
             path to cellprofiler output, should take both csv and parquet
         image_path : 
@@ -187,44 +231,38 @@ class SphereDetect:
         visualize : Boolean, default False
             True or False
         """
+        self.load_data(flag, image_path, channel, regex)
 
-        self.load_data(flag, image_path)
-
+        results = self.detect_spheres()
+        
         # df = pd.read_parquet(cellprofiler_output)
         # self.preprocess()
-        df = self.preprocess(df, channel)
+        # self.preprocess(self, channel)
+    
         # df['URL_SphereDetect'] = df[channel].str.split(':').apply(lambda parts: ':'.join(parts[1:]))
         # df['Metadata_Z'] = df['FileName_SYTO'].str.extract(r'Z(\d+)C').astype(int) # Extract the Z slice number from the filename, there might be a better way to do this in the CellProfiler pipeline
         # df['URL_SphereDetect'] = df['URL_SphereDetect'].str.replace('/share/data/external-datasets/', '/mnt/external-images-pvc/') # This is specific to the way the data is stored in our database
         # df['normalized_variance'] = df['URL_SphereDetect'].apply(lambda image: self.calculate_normalized_variance(self.read_image(image)))
-
-
-        # df['normalized_variance'] = df['URL_SphereDetect'].apply(lambda image: self.calculate_normalized_variance(self.read_image(image))) # Calculate the normalized variance for each image
-
-        # df = (
-        #     df.sort_values(['Metadata_Well', 'Metadata_Z'])
-        #         .assign(d_normalized_variance=lambda x: 
-        #             x.groupby('Metadata_Well')['normalized_variance'].diff())
-        # )
-        # df = (
-        #     df.sort_values(['Metadata_Well', 'Metadata_Z'])
-        #         .groupby('Metadata_Well', group_keys=False)
-        #         .apply(self.assign_plane)
-        # )
-
         
+        if visualize: 
+            self.visualize()
 
-        #self.visualize(df)
-
-        results = self.detect_spheres()
-        self.postprocess()
-        self.visualize()
         return results
 
-# Example usage: @David, I do not understand the main part. 
+
+# --------------------------------------------------------------------------------------------------------------------
+# Example usage 
 if __name__ == "__main__":
-    sample_data = None  # Replace with actual data
-    detector = SphereDetect(sample_data)
-    detected_spheres = detector.run(self)
+    detector = SphereDetect()
+    detected_spheres = detector.run(
+        regex="some_regex_pattern",
+        channel="URL_SYTO",
+        image_path="/path/to/your/parquet/or/folder",
+        flag="cellprofiler",  # or "raw_images"
+        offset=-2,
+        fmin=250,
+        visualize=False
+    )
+
     print(detected_spheres)
 
