@@ -8,7 +8,7 @@ import re
 # --------------------------------------------------------------------------------------------------------------------
 # Need to figure out these things: 
 # --------------------------------------------------------------------------------------------------------------------
-
+"""
 #TODO: Make this work for both types of input. 
 # Cellprofiler output
 image_path = '/share/data/cellprofiler/automation/results/AssayPlate_Corning_3830/5514/8903/featICF_Image.parquet',
@@ -25,7 +25,7 @@ df['URL_SphereDetect'] = df['URL_SphereDetect'].str.replace(
 #  df['Metadata_Z'] = df['FileName_SYTO'].str.extract(r'Z(\d+)C').astype(int) # Extract the Z slice number from the filename, there might be a better way to do this in the CellProfiler pipeline
 
 #TODO: Make a normal setlist with Cellprofiler and see how it looks? 
-
+"""
 # --------------------------------------------------------------------------------------------------------------------
 
 class SphereDetect:
@@ -87,33 +87,31 @@ class SphereDetect:
             image_list = []
             for root, dirs, files in os.walk(image_path):
                 for x in files:
-                     if x.endswith(".tif", ".tiff") and re.search(regex, x) : # assuming we have tif files and we match the regex
+                     if x.endswith((".tif", ".tiff")) and re.search(regex, x) : # assuming we have tif files and we match the regex
                         image_list.append(os.path.join(root, x))
 
+            # Fix up the column names
             df = pd.DataFrame(image_list, columns=['image_path'])
-            df['Metadata_Well, Metadata_Z'] = df['image_path'].str.extract(regex).astype(int)
-
+            df[["Metadata_Well", "Metadata_Z"]] = df['image_path'].str.extract(regex) #TODO: check if the type should be defined here.
             return df
 
     def load_from_cp_output(self, image_path, channel):
 
-        if cellprofiler_output.endswith(".csv"):
+        if image_path.endswith(".csv"):
             df = pd.read_csv(image_path)
 
-        elif cellprofiler_output.endswith(".parquet"):
+        elif image_path.endswith(".parquet"):
             df = pd.read_parquet(image_path)
 
         if f'URL_{channel.upper()}' not in df.columns:
             raise ValueError("The column f'URL_{channel.upper()}' is not present in the dataframe")
 
-
-        # Rename the URL column to match the channel
+        # Fix up the column names
         df = df.rename(columns={f'URL_{channel.upper()}': 'image_path'})
+        pass
+        # df = df[['Metadata_Well', 'Metadata_Z', 'image_path']] #TODO: Need to fix this by ensuring the CP output has a Metadata_Z column, consider adding a check for this, or requiring the user to add it in the pipeline.
 
-        # Only keep the relevant columns
-        df = df[['Metadata_Well', 'Metadata_Z', 'image_path']]
-
-        return df
+        # return df
 
     def detect_spheres(self, offset, fmin):
         """
@@ -183,16 +181,18 @@ class SphereDetect:
     def visualize(self):
         """
         Visualize detected spheres, works on the results of the detect_spheres method.
+        #TODO: think about the most practical implementation
         """
-        df = self.results
+        # df = self.results
 
-        df = df.sort_values(by='Metadata_Z')
-        df_grouped = df.groupby('Metadata_Well')
+        # df = df.sort_values(by='Metadata_Z')
+        # df_grouped = df.groupby('Metadata_Well')
 
-        # Then plot the normalized variance across Z for each well
-        fig, ax = plt.subplots()
-        for name, group in df_grouped:
-            ax.plot(group['Metadata_Z'], group['d_normalized_variance'], label=name)
+        # # Then plot the normalized variance across Z for each well
+        # fig, ax = plt.subplots()
+        # for name, group in df_grouped:
+        #     ax.plot(group['Metadata_Z'], group['d_normalized_variance'], label=name)
+        pass
 
     
     def run(
@@ -231,23 +231,15 @@ class SphereDetect:
         visualize : Boolean, default False
             True or False
         """
-        self.load_data(flag, image_path, channel, regex)
 
-        results = self.detect_spheres()
+        self.load_data(image_path, regex, channel, flag)
         
-        # df = pd.read_parquet(cellprofiler_output)
-        # self.preprocess()
-        # self.preprocess(self, channel)
-    
-        # df['URL_SphereDetect'] = df[channel].str.split(':').apply(lambda parts: ':'.join(parts[1:]))
-        # df['Metadata_Z'] = df['FileName_SYTO'].str.extract(r'Z(\d+)C').astype(int) # Extract the Z slice number from the filename, there might be a better way to do this in the CellProfiler pipeline
-        # df['URL_SphereDetect'] = df['URL_SphereDetect'].str.replace('/share/data/external-datasets/', '/mnt/external-images-pvc/') # This is specific to the way the data is stored in our database
-        # df['normalized_variance'] = df['URL_SphereDetect'].apply(lambda image: self.calculate_normalized_variance(self.read_image(image)))
-        
+        # results = self.detect_spheres(offset, fmin) # TODO: Fix this
+               
         if visualize: 
             self.visualize()
 
-        return results
+        # return results
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -256,7 +248,7 @@ if __name__ == "__main__":
     detector = SphereDetect()
     detected_spheres = detector.run(
         regex="some_regex_pattern",
-        channel="URL_SYTO",
+        channel="syto",
         image_path="/path/to/your/parquet/or/folder",
         flag="cellprofiler",  # or "raw_images"
         offset=-2,
