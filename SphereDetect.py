@@ -9,22 +9,12 @@ import re
 # Need to figure out these things: 
 # --------------------------------------------------------------------------------------------------------------------
 """
-#TODO: Make this work for both types of input. 
-# Cellprofiler output
-image_path = '/share/data/cellprofiler/automation/results/AssayPlate_Corning_3830/5514/8903/featICF_Image.parquet',
-# Folder raw images #TODO: find the folder path to raw images that I can access. 
+# Cellprofiler output & raw images
+image_path = '/home/jovyan/share/data/analyses/christa/SphereDetect/cp_output.parquet',
 image_path = '/mnt/external-images-pvc/spher-colo52-az/CellPainting_20241220clearedspheroidsBOMI_20241220_151510/AssayPlate_Corning_3830/'
 
-#TODO: Take the following row out of the code. 
-df = pd.read_parquet(image_path)
-df['URL_SphereDetect'] = df['URL_SphereDetect'].str.replace(
-    '/share/data/external-datasets/', 
-    '/mnt/external-images-pvc/') # This is specific to the way the data is stored in our database
+#TODO: Make a normal setlist with Cellprofiler and see how it looks? --> Impossible to run it on thinlinc, as of now I am missing a lot of data. 
 
-# TODO: Note somewhere that it would be best to have a metadata indicating slice or section or plane in the cellprofiler output. Fix it beforehand for the example.
-#  df['Metadata_Z'] = df['FileName_SYTO'].str.extract(r'Z(\d+)C').astype(int) # Extract the Z slice number from the filename, there might be a better way to do this in the CellProfiler pipeline
-
-#TODO: Make a normal setlist with Cellprofiler and see how it looks? 
 """
 # --------------------------------------------------------------------------------------------------------------------
 
@@ -37,46 +27,42 @@ class SphereDetect:
         self.data = None
         self.results = None
 
+
     def load_data(
             self: object,
             image_path: str,
             regex: str = None, 
             channel: str = None, 
             flag: str = 'cellprofiler',
+            z_info : str = 'Metadata_Plane'
             ): 
         """ Load relevant images for spheroid detection
         """
 
-        valid_flags = ['raw_images', 'cellprofiler']
-        if flag not in valid_flags:
-            raise ValueError(f"Expected one of {valid_flags}, got '{flag}'.")
-
-        # The path refers to a folder with raw images
-        if flag == 'raw_images': 
-            if not os.path.isdir(image_path): 
-                raise ValueError(f"'{image_path}' is not a valid directory")
-            
+        # Option 1: Load from raw images
+        if os.path.isdir(image_path):
             if regex is None:
-                raise ValueError("For 'raw_images', you must specify a 'regex'.")
-            
+                raise ValueError("For folder-based loading, you must specify a 'regex'.")
             self.data = self.load_from_images(image_path, regex)
-
-        # The path refers to a cellprofiler output
-        elif flag == 'cellprofiler':
+    
+        # Option 2: Load from CellProfiler output
+        else:
             if not os.path.isfile(image_path):
-                "The image_path is not a valid file"
+                raise ValueError(f"'{image_path}' is not a valid file or directory.")
             
             valid_extensions = {".csv", ".parquet"}
             file_ext = os.path.splitext(image_path)[1].lower()
             if file_ext not in valid_extensions:
                 raise ValueError(
                     f"Expected a CSV or parquet file (.csv/.parquet), got '{file_ext}' for '{image_path}'."
-                    )
+                )
             
             if channel is None:
-                raise ValueError("For 'cellprofiler', you must specify a 'channel'.")
-            
-            self.data = self.load_from_cp_output(image_path, channel)
+                raise ValueError("For CellProfiler outputs, you must specify a 'channel'.")
+        
+            self.data = self.load_from_cp_output(image_path, channel, z_info)
+
+        assert self.data is not None, "The data is not loaded"
 
     def load_from_images(self, image_path, regex): 
             """
@@ -90,12 +76,12 @@ class SphereDetect:
                      if x.endswith((".tif", ".tiff")) and re.search(regex, x) : # assuming we have tif files and we match the regex
                         image_list.append(os.path.join(root, x))
 
-            # Fix up the column names
             df = pd.DataFrame(image_list, columns=['image_path'])
-            df[["Metadata_Well", "Metadata_Z"]] = df['image_path'].str.extract(regex) #TODO: check if the type should be defined here.
+            df[["Metadata_Well", "Metadata_Z"]] = df['image_path'].str.extract(regex).reset_index(drop=True) 
+            df["Metadata_Z"] = df["Metadata_Z"].astype(int) 
             return df
 
-    def load_from_cp_output(self, image_path, channel):
+    def load_from_cp_output(self, image_path, channel, z_info):
 
         if image_path.endswith(".csv"):
             df = pd.read_csv(image_path)
@@ -103,22 +89,25 @@ class SphereDetect:
         elif image_path.endswith(".parquet"):
             df = pd.read_parquet(image_path)
 
-        if f'URL_{channel.upper()}' not in df.columns:
-            raise ValueError("The column f'URL_{channel.upper()}' is not present in the dataframe")
+        assert df is not None, "The dataframe is not loaded"
 
-        # Fix up the column names
-        df = df.rename(columns={f'URL_{channel.upper()}': 'image_path'})
+        if f'PathName_{channel.upper()}' not in df.columns:
+            raise ValueError("The column f'PathName_{channel.upper()}' is not present in the dataframe")
+
+        # TODO: Actually need to join PathName with FileName, and then extract the well and Z information
+        df = df.rename(columns={f'PathName_{channel.upper()}': 'image_path'})
+        df['Metadata_Z'] = df[z_info].astype(int)
+        df = df[['image_path','Metadata_Well', 'Metadata_Z']].reset_index(drop=True)
         pass
-        # df = df[['Metadata_Well', 'Metadata_Z', 'image_path']] #TODO: Need to fix this by ensuring the CP output has a Metadata_Z column, consider adding a check for this, or requiring the user to add it in the pipeline.
-
         # return df
 
     def detect_spheres(self, offset, fmin):
         """
         Detect spheroids in the image data, assign a plane number to each image, and filter out wells that do not meet the minimum focus score.
         """
-        # df['image_path'] = df[channel].str.split(':').apply(lambda parts: ':'.join(parts[1:])) #TODO: remove this from here? 
-              
+
+        df = self.data
+
         # Calculate the normalized variance for each image
         df['normalized_variance'] = df['image_path'].apply(lambda image: self.calculate_normalized_variance(self.read_image(image))) 
 
@@ -132,16 +121,16 @@ class SphereDetect:
         # Assign the plane number to each image
         df = (
             df.sort_values(['Metadata_Well', 'Metadata_Z'])
-                .groupby('Metadata_Well', group_keys=False)
-                .apply(self.assign_plane)
+            .groupby('Metadata_Well', group_keys=False)
+            .apply(lambda group: self.assign_plane(group, offset))
         )
 
-        # Assign the plane number to each image
-        self.assign_plane(df, offset)
+        # # Assign the plane number to each image
+        # self.assign_plane(df, offset) #TODO: Do I need one more function for this?
 
         # Filter out wells that do not meet the minimum focus score
         self.postprocess(df, fmin)
-
+        assert df is not None, "The dataframe is not loaded"
         self.result = df
     
     def read_image(self, image):
@@ -200,7 +189,7 @@ class SphereDetect:
             regex: str = r'([A-P]\d{1,2})Z(\d+)C03', #TODO: is this the best way to do this?
             channel: str = 'SYTO',
             image_path: str = '/share/data/cellprofiler/automation/results/AssayPlate_Corning_3830/5514/8903/featICF_Image.parquet', 
-            flag: str = 'cellprofiler', 
+            z_info : str = 'Metadata_Plane',
             offset: int = -2,
             fmin: float = 250,
             visualize : bool = False,
@@ -223,6 +212,10 @@ class SphereDetect:
             path to cellprofiler output, should take both csv and parquet
         image_path : 
             directory of all your raw images. 
+        z_info : str, default 'Metadata_Site'
+            column name in the cellprofiler output that contains the Z/plsne/section information. 
+            Neces
+            If you are using raw images, this will be ignored.
         offset : int, default -2
             value to offset the starting plane. Subtracting 2 works well in our case.
         fmin : float, default 250
@@ -234,7 +227,7 @@ class SphereDetect:
 
         self.load_data(image_path, regex, channel, flag)
         
-        # results = self.detect_spheres(offset, fmin) # TODO: Fix this
+        results = self.detect_spheres(offset, fmin) # TODO: Fix this
                
         if visualize: 
             self.visualize()
