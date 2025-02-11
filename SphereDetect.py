@@ -5,18 +5,6 @@ import tifffile as tiff
 import re
 from concurrent.futures import ThreadPoolExecutor
 
-# --------------------------------------------------------------------------------------------------------------------
-# Need to figure out these things: 
-# --------------------------------------------------------------------------------------------------------------------
-"""
-# Cellprofiler output & raw images
-image_path = '/home/jovyan/share/data/analyses/christa/SphereDetect/cp_output.parquet',
-image_path = '/mnt/external-images-pvc/spher-colo52-az/CellPainting_20241220clearedspheroidsBOMI_20241220_151510/AssayPlate_Corning_3830/'
-
-#TODO: Make a normal setlist with Cellprofiler and see how it looks? --> Impossible to run it on thinlinc, as of now I am missing a lot of data. 
-
-"""
-# --------------------------------------------------------------------------------------------------------------------
 
 class SphereDetect:
     """
@@ -167,12 +155,12 @@ class SphereDetect:
         Visualize detected spheres, works on the results of the detect_spheres method.
         """
         import matplotlib.pyplot as plt
-        
+
+        ### Plot the normalized variance across Z for each well        
         df_plot = self.results
 
         # Group df by Metadata_Well and sort by Metadata_Z
-        df_plot = df_plot.sort_values(by='Metadata_Z')
-        df_grouped = df_plot.groupby('Metadata_Well')
+        df_grouped = df_plot.sort_values(by='Metadata_Z').groupby('Metadata_Well')
 
         # Then plot the normalized variance across Z for each well
         fig, ax = plt.subplots()
@@ -180,9 +168,8 @@ class SphereDetect:
             ax.plot(group['Metadata_Z'], group['normalized_variance'], label=name)
         ax.set_xlabel('Z')
         ax.set_ylabel('Normalized Variance')
+        ax.set_title('Normalized Variance across Z for each well')
 
-        #TODO: Consider adding the image data as well
-    
     def run(
             self: object, 
             regex: str,
@@ -206,7 +193,7 @@ class SphereDetect:
         image_path : 
             folder containing all raw images or path to cellprofiler output, takes both csv and parquet 
         z_info : str, default 'Metadata_Site'
-            column name in the cellprofiler output that contains the Z/plsne/section information. 
+            column name in the cellprofiler output that contains the Z/plane/section information. 
             If you are using raw images, this will be ignored.
         offset : int, default -2
             value to offset the starting plane. Subtracting 2 works well in our case.
@@ -227,13 +214,13 @@ class SphereDetect:
         self.load_data(image_path, regex, channel)
         
         # Detect the spheroids
-        results = self.detect_spheres() 
+        self.detect_spheres() 
 
         # Visualize the results       
         if visualize: 
             self.visualize()
 
-        return results
+        return self.results
 
 
 # --------------------------------------------------------------------------------------------------------------------
