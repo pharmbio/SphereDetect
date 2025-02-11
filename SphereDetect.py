@@ -1,9 +1,9 @@
-import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import os
 import tifffile as tiff
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 # --------------------------------------------------------------------------------------------------------------------
 # Need to figure out these things: 
@@ -14,6 +14,8 @@ image_path = '/home/jovyan/share/data/analyses/christa/SphereDetect/cp_output.pa
 image_path = '/mnt/external-images-pvc/spher-colo52-az/CellPainting_20241220clearedspheroidsBOMI_20241220_151510/AssayPlate_Corning_3830/'
 
 #TODO: Make a normal setlist with Cellprofiler and see how it looks? --> Impossible to run it on thinlinc, as of now I am missing a lot of data. 
+
+#TODO: what about having a sliceLimit?
 
 """
 # --------------------------------------------------------------------------------------------------------------------
@@ -33,7 +35,6 @@ class SphereDetect:
             image_path: str,
             regex: str = None, 
             channel: str = None, 
-            flag: str = 'cellprofiler',
             z_info : str = 'Metadata_Plane'
             ): 
         """ Load relevant images for spheroid detection
@@ -96,7 +97,7 @@ class SphereDetect:
 
         # TODO: Actually need to join PathName with FileName, and then extract the well and Z information
         df = df.rename(columns={f'PathName_{channel.upper()}': 'image_path'})
-        df['Metadata_Z'] = df[z_info].astype(int)
+        df['Metadata_Z'] = df[z_info].astype(int) # TODO: This is not the best way to do this, do I want to keep the original name? 
         df = df[['image_path','Metadata_Well', 'Metadata_Z']].reset_index(drop=True)
         pass
         # return df
@@ -108,39 +109,54 @@ class SphereDetect:
 
         df = self.data
 
-        # Calculate the normalized variance for each image
-        df['normalized_variance'] = df['image_path'].apply(lambda image: self.calculate_normalized_variance(self.read_image(image))) 
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            variances = list(executor.map(self.compute_norm_variance, df['image_path']))
+        df['normalized_variance'] = variances
 
-        # Caluclate the differential normalized variance
-        df = (
-            df.sort_values(['Metadata_Well', 'Metadata_Z'])
-                .assign(delta_normalized_variance=lambda x: 
-                    x.groupby('Metadata_Well')['normalized_variance'].diff())
-        )
+        # # Calculate the normalized variance for each image
+        # df['normalized_variance'] = df['image_path'].apply(lambda image: self.calculate_normalized_variance(self.read_image(image))) 
 
-        # Assign the plane number to each image
-        df = (
-            df.sort_values(['Metadata_Well', 'Metadata_Z'])
-            .groupby('Metadata_Well', group_keys=False)
-            .apply(lambda group: self.assign_plane(group, offset))
-        )
+        # #
+        # df = (
+        #     df.sort_values(['Metadata_Well', 'Metadata_Z'])
+        #         .assign(delta_normalized_variance=lambda x: 
+        #             x.groupby('Metadata_Well')['normalized_variance'].diff())
+        # )
 
         # # Assign the plane number to each image
-        # self.assign_plane(df, offset) #TODO: Do I need one more function for this?
+        # df = (
+        #     df.sort_values(['Metadata_Well', 'Metadata_Z'])
+        #     .groupby('Metadata_Well', group_keys=False)
+        #     .apply(lambda group: self.assign_plane(group, offset=offset))
+        # )
+
+        # Caluclate the differential normalized variance
+        df = df.sort_values(['Metadata_Well', 'Metadata_Z'])
+
+        # Assign the plane number to each image
+        df['delta_normalized_variance'] = df.groupby('Metadata_Well')['normalized_variance'].diff()
+        df = df.groupby('Metadata_Well', group_keys=False).apply(lambda group: self.assign_plane(group, offset=offset))
+
 
         # Filter out wells that do not meet the minimum focus score
         self.postprocess(df, fmin)
         assert df is not None, "The dataframe is not loaded"
         self.result = df
     
-    def read_image(self, image):
+    def read_image(self, image, downsample=16): #TODO: move downsample out from here? 
         with tiff.TiffFile(image) as tf:
             data = tf.asarray()
+        if downsample > 1: # Assume the image is 2D
+            data = data[::downsample, ::downsample]
         return data
 
     def calculate_normalized_variance(self, data):
         return np.var(data) / np.mean(data)
     
+    def compute_norm_variance(self, image_path):
+        img = self.read_image(image_path)
+        return self.calculate_normalized_variance(img)
+
 
     def assign_plane(self, group, offset):
         idxmax = group['delta_normalized_variance'].idxmax() 
@@ -149,8 +165,8 @@ class SphereDetect:
         planes = (np.arange(len(group)) - offset_x)
         planes = np.where(planes < 0, pd.NA, planes) # Replace negative plane values (i.e. rows before max) with NaN; take a maximum plane limit?
         
-        group['Metadata_Plane'] = pd.Series(planes, index=group.index, dtype='Int64')
-        self.results = group
+        group['Metadata_Z_calculated'] = pd.Series(planes, index=group.index, dtype='Int64')
+        return group
 
    
     def postprocess(self, df, fmin):
@@ -160,7 +176,7 @@ class SphereDetect:
        
         #Identify the wells that meet the condition for plane 0
         wells_of_interest = df.loc[
-            (df['Metadata_Plane'] == 0) & (df['normalized_variance'] > fmin),
+            (df['Metadata_Z_calculated'] == 0) & (df['normalized_variance'] > fmin),
                 'Metadata_Well'].unique()
 
         filtered_df = df[df['Metadata_Well'].isin(wells_of_interest)]
@@ -172,21 +188,25 @@ class SphereDetect:
         Visualize detected spheres, works on the results of the detect_spheres method.
         #TODO: think about the most practical implementation
         """
-        # df = self.results
+        import matplotlib.pyplot as plt
+        
+        df_plot = self.results
 
-        # df = df.sort_values(by='Metadata_Z')
-        # df_grouped = df.groupby('Metadata_Well')
+        # Group df by Metadata_Well and sort by Metadata_Z
+        df_plot = df_plot.sort_values(by='Metadata_Z')
+        df_grouped = df_plot.groupby('Metadata_Well')
 
-        # # Then plot the normalized variance across Z for each well
-        # fig, ax = plt.subplots()
-        # for name, group in df_grouped:
-        #     ax.plot(group['Metadata_Z'], group['d_normalized_variance'], label=name)
-        pass
+        # Then plot the normalized variance across Z for each well
+        fig, ax = plt.subplots()
+        for name, group in df_grouped:
+            ax.plot(group['Metadata_Z'], group['normalized_variance'], label=name)
+        ax.set_xlabel('Z')
+        ax.set_ylabel('Normalized Variance')
 
     
     def run(
             self: object, 
-            regex: str = r'([A-P]\d{1,2})Z(\d+)C03', #TODO: is this the best way to do this?
+            regex: str = r'([A-P]\d{1,2})_T0001F001L01A03Z(\d+)C03', #TODO: is this the best way to do this?
             channel: str = 'SYTO',
             image_path: str = '/share/data/cellprofiler/automation/results/AssayPlate_Corning_3830/5514/8903/featICF_Image.parquet', 
             z_info : str = 'Metadata_Plane',
@@ -199,22 +219,14 @@ class SphereDetect:
 
         Parameters
         ----------
-        flag : str, default 'cellprofiler'
-            is it a folder you are providing or a cellprofiler output?  
-            currently supports one of ['raw_images', 'cellprofiler']
-        path_to_images: string? 
-            a path to the folder with images or a path to the cellprofiler output
         regex : str, default r'Z(\d+)C03'
             pattern that can collect metadata from the images. Only is CellProfiler data is not provided.
         channel : str, default 'SYTO'
-            channel to perform detection on, needs to match the channelname in the cellprofiler output.
-        cellprofiler_output : 
-            path to cellprofiler output, should take both csv and parquet
+            channel to perform detection on, needs to match the channelname in the cellprofiler output. 
         image_path : 
-            directory of all your raw images. 
+            folder containing all raw images or path to cellprofiler output, takes both csv and parquet 
         z_info : str, default 'Metadata_Site'
             column name in the cellprofiler output that contains the Z/plsne/section information. 
-            Neces
             If you are using raw images, this will be ignored.
         offset : int, default -2
             value to offset the starting plane. Subtracting 2 works well in our case.
@@ -225,7 +237,7 @@ class SphereDetect:
             True or False
         """
 
-        self.load_data(image_path, regex, channel, flag)
+        self.load_data(image_path, regex, channel, z_info)
         
         results = self.detect_spheres(offset, fmin) # TODO: Fix this
                
@@ -243,9 +255,10 @@ if __name__ == "__main__":
         regex="some_regex_pattern",
         channel="syto",
         image_path="/path/to/your/parquet/or/folder",
-        flag="cellprofiler",  # or "raw_images"
+        z_info="Metadata_Plane",
         offset=-2,
         fmin=250,
+        downsample=16,
         visualize=False
     )
 
