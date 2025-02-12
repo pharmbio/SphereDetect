@@ -2,7 +2,6 @@
 *.csv
 *.tif
 *.pdf
-*.png
 .DS_Store
 .ipynb_checkpoints
 **/Image*
