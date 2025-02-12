@@ -1,6 +1,6 @@
 &emsp;
 <p align="center">
-<img width="70%" height="70%" src="SphereDetect.png">
+<img width="70%" height="70%" src="supporting/SphereDetect.png">
 </p>
 
 # SphereDetect
