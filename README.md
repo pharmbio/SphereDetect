@@ -23,7 +23,7 @@ References:
 
 <a name="RefFocusScore1">2</a>: [FocusScore](https://cellprofiler-manual.s3.amazonaws.com/CellProfiler-4.0.5/modules/measurement.html#:~:text=Measurements%20made%20by%20this%20module,-Blur%20metrics&text=FocusScore%3A%20A%20measure%20of%20the,scores%20correspond%20to%20lower%20bluriness)
 
-<a name="RefFocusScore2">3</a>: [Normalized Variance](https://analyticalsciencejournals.onlinelibrary.wiley.com/doi/epdf/10.1002/jemt.20118)
+<a name="RefFocusScore2">3</a>: Sun, Y., Duthaler, S. and Nelson, B.J. (2004), Autofocusing in computer microscopy: Selecting the optimal focus algorithm. Microsc. Res. Tech., 65: 139-149. [doi](https://doi.org/10.1002/jemt.20118)
 
-<a name="RefCP">4</a>: Stirling DR, *et al* (2021). CellProfiler 4: improvements in speed, utility and usability. BMC Bioinformatics, 22 (1), 433. PMID: 34507520 PMCID: PMC8431850
+<a name="RefCP">4</a>: Stirling DR, *et al* (2021). CellProfiler 4: improvements in speed, utility and usability. BMC Bioinformatics, 22 (1), 433. PMID: 34507520 PMCID: PMC8431850  [doi](https://doi.org/10.1186/s12859-021-04344-9)
 
