@@ -16,5 +16,10 @@ output/
 notebooks/
 data/
 old_files/
+M18_frames/
 *old.ipynb
 /testing/
+.venv/
+AZ/
+__pycache__/
+*.pyc
