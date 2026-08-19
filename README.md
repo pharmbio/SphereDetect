@@ -1,10 +1,10 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22011585.svg)](https://doi.org/10.5281/zenodo.22011585)
 &emsp;
 <p align="center">
 <img width="70%" height="70%" src="supporting/SphereDetect.png">
 </p>
 
 # SphereDetect
-https://doi.org/10.5281/zenodo.22011585
 High-content experiments imaging spheroids often generate excess image data. Such experiments would benefit from systematic and targeted data acquisition. It can be challenging to systematically find the position where to start imaging, a position that may vary when basing the detection method on fluorophore intensity and perturbations that affect that intensity. There are several methods to perform on-the-fly detection but most are proprietary and microscope-specific. 
 
 Here we present SphereDetect<sup>[1](#Ref2025)</sup>, an algorithm that automatically identifies the first spheroid section in a Z-stack by detecting when the spheroid comes into focus as imaging begins along the Z-axis. It works by finding the maximum change in FocusScore <sup>[2](#RefFocusScore1),[3](#RefFocusScore2)</sup>, taking this point as the starting point. 
