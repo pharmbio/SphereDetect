@@ -102,7 +102,11 @@ class SphereDetect:
 
         # Assign the plane number to each image
         df['delta_normalized_variance'] = df.groupby('Metadata_Well')['normalized_variance'].diff()
-        df = df.groupby('Metadata_Well', group_keys=False).apply(lambda group: self.assign_plane(group))
+        # Select the columns explicitly so the grouping key survives the apply. pandas 3.0
+        # excludes grouping columns from the applied frame (2.x only warned), which dropped
+        # Metadata_Well before postprocess could filter on it.
+        df = df.groupby('Metadata_Well', group_keys=False)[df.columns.tolist()].apply(
+            lambda group: self.assign_plane(group))
 
 
         # Filter out wells that do not meet the minimum focus score

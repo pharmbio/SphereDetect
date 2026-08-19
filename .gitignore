@@ -23,3 +23,5 @@ M18_frames/
 AZ/
 __pycache__/
 *.pyc
+*.tiff
+detection_example_dataset/
